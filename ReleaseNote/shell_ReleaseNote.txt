@@ -1,0 +1,21 @@
+2022.02.14 发布实现FSD421 CMS新增异业接口会员组查询
+2022.02.14 发布实现CRHK031 Shell HK point expiring by month  积分过期
+2022.02.14 发布商品主数据格式转换Import Interfaces_Catalog_Import_n_Batch_Manager  
+v2.0
+2022.03.10 更新LocalApi中存储过程，优化。
+2022.03.29  部署商品主数据API  包含 1.导入localAPI
+                                   2.查询hk过期积分
+								   
+								 3  更新对照表 Retail_map
+								 4新增视图 [ItemHieracy]，
+								 5 R1_1_tran_discount 增加quality 字段 decimal （18.4）
+								 6 建立香港输出报表目录  R_HK001_Invoice
+
+est_hk 存储过程  est _hk 
+ ,GetBecomingExpirePoint
+ ，getExpiredPoint
+ ，[pointConvertCoupon_hk]
+ ， [Member_point_detail]
+ ， [main_est_manual_hk]
+建立对照表 HK_gsap_materialCode_maping  [R_HK001_Invoice]
+2022.04.10 更新生产 getDocumentJson 过程，更新显示优惠券到期日期。

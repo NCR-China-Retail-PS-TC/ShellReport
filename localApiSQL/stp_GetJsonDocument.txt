@@ -1,0 +1,189 @@
+USE [LocalAPI]
+GO
+/****** Object:  StoredProcedure [dbo].[stp_GetJsonDocument]    Script Date: 4/11/2022 10:45:10 AM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+/*
+*************************************************************************************************************************
+功能：根据会员卡号  返回 会员的优惠券。
+存储过程名称及参数  [dbo].[stp_GetJsonDocument]
+	declare  @RetailerId smallint =5
+	,@clubCardId  varchar(20)='7004900011375454810'   --会员卡号
+	,@active   int =4--     优惠券状态
+	,@type		int	=0--	根据类型返回，0--返回优惠券号以0开头的优惠券（积分兑换订单上使用），1--返回以非0开头的券号的券（我的优惠列表中展示）-- added by Rich on 4/24/2018
+	,@JSONStr nvarchar(max) =''     --返回优惠券字符串
+
+ 
+EXEC stp_GetJsonDocument @RetailerId,@clubCardId,@active ,@type,@JSONStr output   
+
+print @jsonstr;
+
+declare @JSONSt nvarchar(max) 
+EXEC stp_GetJsonDocument 5,'7004900010117041910',0,1,@JSONSt --Added by Rich on 2018/04/24
+ 
+ 
+select @JSONSt
+
+select @JSONStr
+--20180420 create
+2019-12-10
+cms去掉matrixmeber限制
+ 0=Active, 1=Redeem, 2=Cancel,3 Future 4 -- Expired
+ --2021-07-26 修改过期状态判断 原是券的过期日期  修改为根据用券促销的结束日期 判断券过期状态
+  --2021-09-02 修改优惠券在指定日结束前过期（应在指定日结束后过期）;
+  --2021-09-08-2021-09-08 modify 券的结束日期用促销结束日期来显示
+  --2021-09-13 	 convert(varchar(10), iif(  convert(varchar(10), isnull(ph.PromotionHeaderEndDate,ld.EndDate),120)>ld.EndDate+1,ld.EndDate, isnull(ph.PromotionHeaderEndDate,ld.EndDate) ),120)
+	---	 as   EndDate,--2021-09-10 修改为促销过期日期
+   --v2.0  
+ v2.1    2022-01-05  add  nolock 
+ v2.2  add businessid 
+ v2.3 当优惠券的用券促销被删除的情况，优惠券的过期日期请使用优惠券的发券日期，且将此类优惠券显示在已过期中。 
+-------------------------------------------------------------------------------------------------------------------------                                                                               			
+WHO				WHEN		WHAT
+-------------------------------------------------------------------------------------------------------------------------
+zhengyuepo		2018/03/30		create
+-------------------------------------------------------------------------------------------------------------------------
+*************************************************************************************************************************
+Status updated by Rich on 2018/4/24
+0-有效（已注册未使用），1-已兑换，4-已过期（未使用但有效期已超出当前日期）
+
+
+*/
+
+ALTER PROCEDURE  [dbo].[stp_GetJsonDocument]
+	@RetailerId smallint
+	,@clubCardId  varchar(20)
+	,@active   int
+	,@type		int  --Added by Rich on 2018/4/24
+	--, @LastBarcode varchar(40)='' 
+	,@JSONStr nvarchar(max) ='' output
+
+as 
+
+Begin
+	Declare 
+		 @MatrixMemberId int
+		,@PreStr nvarchar(max)
+		,@ConnStr1 nvarchar(max)
+		,@ConnStr2 nvarchar(max)
+		,@ConnStr3 nvarchar(max)
+		,@SuffStr nvarchar(max)
+		 
+-- set @MatrixMemberId=@RetailerId
+   select @MatrixMemberId=MatrixMemberId from loyalty_shell_prod..RetailerCode_MP where RetailerId=@RetailerId -- fixed RetailerID <> MatrixMemberID issue, updated by Rich on 2018-5-12
+   set  @JSONStr='';
+	set @ConnStr1='":"'
+	set @ConnStr2='","'
+	set @ConnStr3=''
+	set @SuffStr='"}'
+
+
+	declare
+		 @Id nvarchar(max)='1'
+		 ,@name nvarchar(50)=''  
+		 ,@startDate  nvarchar(max)=''
+		 ,@endDate nvarchar(max)=''   
+		 ,@redemptions  int =0
+		 ,@tranid int
+		 ,@issuedate varchar(10),
+		 @barcode varchar(max),
+	     @DocumentId int,
+		  @BusinessId varchar(150)
+	declare Document_Cur cursor  static
+	for 
+	SELECT   
+	 pd.DocumentId,
+	 ld.BusinessId,
+          -- pd.DocumentName,
+		  case when ci.InstanceDescription is  not null  then ci.InstanceDescription else  pd.DocumentName end  name ,
+           Barcode,
+		
+          convert(varchar(10), ld.StartDate,120) StartDate,
+	         	 convert(varchar(10), iif(  convert(varchar(10), isnull(ph.PromotionHeaderEndDate,ld.StartDate),120)>ld.EndDate,ld.EndDate, isnull(ph.PromotionHeaderEndDate,ld.StartDate) ),120)
+		 as   EndDate,--2021-09-10 修改为促销过期日期
+     	
+           CASE
+                 WHEN LD.Status = 0
+          	             AND (Getdate() >isnull(ph.PromotionHeaderEndDate,ld.StartDate ) or (getdate()>ld.EndDate) or ph.PromotionHeaderEndDate is null  ) THEN 4-- Expired  --Changed by Rich from 3 to 4 on 2018/4/26
+
+				  when ld.Status=2  then 1
+             ELSE LD.Status -- 0=Active, 1=Redeem, 2=Cancel,3 Future 4 -- Expired
+           END AS DocumentStatus,
+		      convert(varchar(10),  IssueDate,120) IssueDate,
+			 TranId
+			-- ,ld.DocumentId
+   FROM   loyalty_shell_prod..CRM_LoyaltyDocuments (nolock) LD
+    left join [Promotion_Shell].[dbo].[CouponInstance] (nolock) ci on ld.DocumentId=ci.DocumentId and  ld.BusinessId=ci.BusinessId
+	 left join dbo.PromotionHeader_PR  (nolock) ph on ph.RequiredCoupon=1 and ph.InstanceInternalKey=ci.InstanceInternalKey
+                      LEFT JOIN  loyalty_shell_prod..PromotionDocuments_PR PD
+					 
+                  ON LD.BarcodeId = PD.BarcodeId
+                     AND LD.ClubInternalKey = PD.ClubInternalKey
+                     AND LD.DocumentId = PD.DocumentId
+                     AND LD.MatrixMemberId = PD.MatrixMemberId
+           LEFT JOIN loyalty_shell_prod..CRM_BuyingUnit (nolock) cb
+                  ON cb.BuyingUnitInternalKey = ld.IssuedBuyingUnitInternalKey
+	OUTER APPLY
+(
+	SELECT TOP 1 PT.PosDateTime AS IssueDate,pt.TranId
+	FROM loyalty_shell_prod..CRM_POSLoyaltyDocumentsActivity  (nolock) PLDA
+	INNER JOIN loyalty_shell_prod..CRM_POSTran (nolock) PT
+		ON PLDA.POSTranInternalKey = PT.POSTranInternalKey 
+		AND PLDA.PosDateTime = PT.PosDateTime
+	WHERE PLDA.DocumentInternalKey = LD.DocumentInternalKey 
+	AND PLDA.Action = 0	-- Issuing
+	ORDER BY PT.PosDateTime
+
+) IssuingTran
+
+           INNER JOIN loyalty_shell_prod..Store_StoreCode_MP  (nolock) S
+	ON LD.IssueMatrixMemberId = S.MatrixMemberId
+	AND LD.IssueStoreInternalKey = S.StoreInternalKey
+    WHERE  
+            cb.ExternalBuyingUnit = @clubCardId
+	and  pd.DocumentId  is not null --and  ld.MatrixMemberId = @MatrixMemberId
+		   and ( left(LD.barcode,1) = case when @type = 0 then '0' else 'X' end  --Added by Rich for filter coupon with prefix 0 or other on 2018/4/24
+				or left(LD.barcode,1) <> case when @type = 1 then '0' else 'X' end )
+           AND CASE
+                    WHEN LD.Status = 0
+        --     AND (Getdate() >isnull(ph.PromotionHeaderEndDate,'2017-01-01') or (getdate()-1>ld.EndDate) ) THEN 4-- Expired  --Changed by Rich from 3 to 4 on 2018/4/26
+               AND( Getdate() >isnull(ph.PromotionHeaderEndDate,ld.StartDate ) or (getdate()>ld.EndDate) or ph.PromotionHeaderEndDate is null ) THEN 4 -- 2021025
+			when ld.Status=2  then 1  ELSE LD.Status
+               END = @active 
+			--  and ld.Barcode>@lastBarcode
+    order by ld.EndDate 
+	
+
+	
+	open Document_Cur
+	fetch next from Document_Cur into @Id,@BusinessId,@name,@barcode,@startDate,@endDate,@active,@issuedate,@tranid --,@documentId
+	while @@fetch_STATUS = 0 
+	begin
+	
+		set @JSONStr=@JSONStr+'{"Id":'+'"'+ltrim(str(@id))+'",'+'"BusinessId":'+'"'+ltrim(@BusinessId)+'",'+'"Name":'+N'"'+ltrim(@name)+'",'+'"Barcode":'+'"'+ltrim(@barcode)+'",'+'"StartDate":"'+@startDate+'",'+'"EndDate":"'+@EndDate+'",'
+		+'"DocumentStatus":"'+ltrim(str(@active))
+		+'",'+'"Issuedate"："'+isnull(@issuedate,'')
+		+'",'+'"Tranid"："'+isnull(ltrim(str(@tranid)),'')
+		--//+'",'+'"DocumentId"："'+isnull(ltrim(str(@DocumentId)),'')
+		+'"},'  --Fixed missing "," for issuedate and tranid issue by Rich on 2018/4/24
+
+		fetch next from Document_Cur into  @Id,@BusinessId,@name,@barcode,@startDate,@endDate,@active,@issuedate,@tranid
+	end 
+	close Document_Cur               
+	deallocate Document_Cur 
+	 
+	print @JSONStr	
+		--select @JSONStr= SUBSTRING (@JSONStr,1,LEN(@JSONStr)-1)
+		select  @JSONStr=     --updated by Rich on 2018/4/20 to fix issue happened when query result is Null with status
+			case when LEN(@JSONStr) > 0 then  SUBSTRING (@JSONStr,1,LEN(@JSONStr)-1)
+			else SUBSTRING (@JSONStr,1,LEN(@JSONStr)) end 
+	
+		select @JSONStr='{"Documents":'+'['+@JSONStr+']}'
+		print len(@jsonstr);
+	  print @jsonstr;
+	select  @jsonstr;
+	
+
+End
