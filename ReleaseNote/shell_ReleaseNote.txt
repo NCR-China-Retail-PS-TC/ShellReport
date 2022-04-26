@@ -10,6 +10,7 @@ v2.0
 								 4新增视图 [ItemHieracy]，
 								 5 R1_1_tran_discount 增加quality 字段 decimal （18.4）
 								 6 建立香港输出报表目录  R_HK001_Invoice
+								 
 
 est_hk 存储过程  est _hk 
  ,GetBecomingExpirePoint
@@ -17,5 +18,6 @@ est_hk 存储过程  est _hk
  ，[pointConvertCoupon_hk]
  ， [Member_point_detail]
  ， [main_est_manual_hk]
+  ,member_point_redem
 建立对照表 HK_gsap_materialCode_maping  [R_HK001_Invoice]
 2022.04.10 更新生产 getDocumentJson 过程，更新显示优惠券到期日期。
