@@ -1,0 +1,130 @@
+USE [LocalAPI]
+GO
+/****** Object:  StoredProcedure [dbo].[Stp_getaccountpointdetail]    Script Date: 6/28/2022 5:48:20 PM ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+
+-- =============================================
+-- Author:		<Author,,Name>
+-- Create date: <Create Date,,>
+-- Description:	<Description,,>
+--会员卡号、分页参数（每页返回15行记录）、积分账户ID、Retail ID
+--2022-01-27  add with nolock
+--2022-06-22 Exclude the issue doucument transaction 20220622
+-- =============================================
+ALTER   PROCEDURE [dbo].[Stp_getaccountpointdetail]
+  -- Add the parameters for the stored procedure here
+  @ClubCardID      VARCHAR(50),
+  @LastProcessDate DATETIME,   --首次调用传输'2100-01-01'
+  @AccountID       INT,
+  --@RetailID        INT,
+ 
+  @JSONStr nvarchar(max) ='' output
+AS
+  BEGIN
+
+	Declare 
+		 @MatrixMemberId int
+		,@DocumentId int
+		,@PreStr nvarchar(max)
+		,@ConnStr1 nvarchar(max)
+		,@ConnStr2 nvarchar(max)
+		,@ConnStr3 nvarchar(max)
+		,@SuffStr nvarchar(max)
+		
+   set  @JSONStr='';
+	set @ConnStr1='":"'
+	set @ConnStr2='","'
+	set @ConnStr3=''
+	set @SuffStr='"}'
+
+
+	declare
+	@storeName nvarchar(30),
+	@EarValue  decimal(10,0),
+	@redeemValue decimal(10,0),
+	@ProcessDate datetime,
+	@BusinessDate datetime,
+    @ReasonDescription Nvarchar(100),
+	@storeid varchar(10),
+	@posid varchar(3),
+	@tranId int,
+	@RetailID        INT
+	
+
+	declare   pointTransaction   cursor static for  
+      --会员卡号、交易点（油站）名称、本次交易积分、交易时间、交易描述（此返回值待定是否要返回）
+      SELECT      top 10     
+	    st.StoreName,
+             isnull(cpaa.EarnValue,0)  Earnvalue,
+             isnull(cpaa.RedeemValue,0)  redeemValue,
+              CP.StartDateTime,
+           case when cpaa.RewardStatusId=2 and RedeemValue<>0 then N'积分过期' else  isnull(Isnull(gd.Value, purc.ReasonDescription),'')   end AS ReasonDescription
+                ,st.StoreId
+				,cp.PosId
+				,cp.TranId
+				,cp.PosDateTime 
+				, isnull(rc.RetailerId,1)
+	  FROM   Loyalty_Shell_prod..CRM_POSTran (nolock) cp 
+	    LEFT JOIN ( select cpaa.*,cpaar.RewardStatusId
+		       from Loyalty_Shell_prod.dbo.CRM_POSAccountsActivity (nolock)  cpaa 
+			     left join Loyalty_Shell_prod..CRM_PosAccountsActivity_RewardLog (nolock)  cpaar
+			   on cpaa.PosTranInternalKey=cpaar.Redeem_PosTranInternalKey and cpaar.RewardStatusId=2
+		         inner  JOIN  Loyalty_Shell_prod..CRM_AccumulatedAccounts caa --2019-05-07 add 
+                    ON caa.AccountInternalKey = cpaa.AccountInternalKey --2019-05-07 add 
+                      AND  caa.AccountId =  @AccountID   --2019-05-07 add 
+					 --	and caa.MatrixMemberId=cpaa.MatrixMemberId   --2019-05-07 add 
+						 ) cpaa
+                    ON cp.POSTranInternalKey = cpaa.PosTranInternalKey
+         
+              
+             LEFT JOIN [MP_Shell].dbo.[RetailerCode] (nolock)  rc
+                     ON rc.MatrixMemberId = cp.MatrixMemberId
+              LEFT JOIN Loyalty_Shell_prod..CRM_Member (nolock)  cm
+                   ON cm.BuyingUnitInternalKey = cp.BuyingUnitInternalKey
+            LEFT JOIN Loyalty_Shell_prod.dbo.Store_StoreCode_MP  (nolock) st
+                    ON st.StoreInternalKey = cp.StoreInternalKey AND ST.MatrixMemberId=CP.MatrixMemberId
+             LEFT JOIN Loyalty_Shell_prod.[dbo].[CRM_PointsUpdateReasonCodes] (nolock)  purc
+                    ON cpaa.ReasonCode = purc.ReasonCode
+             LEFT JOIN MP_Shell.dbo.GeneralDictionary (nolock)  gd
+                    ON gd.EntryId = purc.ReasonDescription
+                       AND gd.LanguageId = 8
+                     --  AND purc.IsActive = 1   /* */
+      WHERE  
+             -- rc.RetailerId = @RetailID
+               
+		    cm.ExternalMemberKey = @ClubCardID
+          AND CP.StartDateTime< @LastProcessDate
+		    AND  ST.StoreId<>'0' AND CP.PosId<>'-76'   --Exclude the issue doucument transaction 20220622
+       order by CP.StartDateTime  DESC
+
+	
+	  
+			 open  pointTransaction 
+			 
+			 fetch next from pointTransaction into  @storeName,@EarValue ,@redeemValue ,@ProcessDate ,  @ReasonDescription
+			  ,@storeid,@posid,@tranId,@BusinessDate,@RetailID   
+			 while @@FETCH_STATUS=0
+			 begin 
+		
+			 print @jsonstr; 
+			 set @JSONStr=@JSONStr+'{"Name":'+'"'+@storeName+'","EarValue":"'+ltrim(str(@EarValue,10,0))+'","RedeemValue":"'+ltrim(str(@redeemValue,10,0))
+			 +'","ProcessDate":"'+convert(varchar(20),@processdate,120)+'","BusinessDate":"'+convert(varchar(10),@BusinessDate,120)+   '","ReassonDescription":"'+@ReasonDescription++'","storeId":"'
+			 +@storeid+'","posid":"'+@posid+'","TranId":"'+ltrim(str(@tranId))+'","RetailID":"'+ltrim(str(@RetailID))+'"},'
+			  print @jsonstr			 
+           fetch next from  pointTransaction into  @storeName,@EarValue ,@redeemValue ,@ProcessDate ,  @ReasonDescription
+			  ,@storeid,@posid,@tranId,@BusinessDate,@RetailID 
+			  		  end
+    	close         pointTransaction               
+	   deallocate   pointTransaction
+
+	 set  @JSONStr=     
+			case when LEN(@JSONStr) > 0 then  SUBSTRING (@JSONStr,1,LEN(@JSONStr)-1)
+			else SUBSTRING (@JSONStr,1,LEN(@JSONStr)) end 
+			set @JSONStr='{"PointTransactions":'+'['+@JSONStr+']}'
+
+print @jsonstr;
+
+end

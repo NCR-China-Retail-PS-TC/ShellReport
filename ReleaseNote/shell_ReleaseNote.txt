@@ -21,3 +21,9 @@ est_hk 存储过程  est _hk
   ,member_point_redem
 建立对照表 HK_gsap_materialCode_maping  [R_HK001_Invoice]
 2022.04.10 更新生产 getDocumentJson 过程，更新显示优惠券到期日期。
+2022.05.10 [v_get_reg_compAndStore_1] 增加matrimemberid  10
+     v_cs_segment] 增加segmentid
+2022.06.22 更新生产修复发券交易不应作为交易在手机端显示
+    localapi 数据库   stp_getaccountpointdetail
+
+      
